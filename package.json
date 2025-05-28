@@ -1,0 +1,9 @@
+{
+  "name": "cloudflare-telegram-bot",
+  "version": "1.0.0",
+  "description": "A Telegram bot to manage Cloudflare domains via Cloudflare Workers.",
+  "private": true,
+  "author": "RamakMKH",
+  "license": "MIT",
+  "main": "src/index.js" 
+}

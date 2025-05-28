@@ -1,0 +1,7 @@
+name = "cloudflare-telegram-bot"
+main = "src/index.js"
+compatibility_date = "2025-05-27" 
+
+[observability.logs]
+enabled = true
+
