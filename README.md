@@ -1,4 +1,7 @@
 # ربات تلگرامی مدیریت کلودفلر (Cloudflare Telegram Bot)
+  <div align="center">
+  <img src="Logo.jpg" alt="Docker Logo" width="50%">
+</div>
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/deploy?repo=https://github.com/RamakMKH/cloudflare-telegram-bot)
 [![Cloudflare Worker](https://img.shields.io/badge/Cloudflare-Worker-F38020?logo=cloudflare)](https://workers.cloudflare.com/)
