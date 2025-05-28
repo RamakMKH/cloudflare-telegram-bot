@@ -165,17 +165,10 @@ async function getCloudflareDnsRecords(zoneId, env) {
   }
 }
 
-/**
- * Fetches basic zone analytics for the last 24 hours. (Simplified Query - No Firewall Data)
- * @param {string} zoneId The Cloudflare Zone ID.
- * @param {Environment} env Environment variables.
- * @returns {Promise<Object|null>} Analytics data or null on error.
- */
 async function getZoneAnalytics(zoneId, env) {
   const now = new Date();
   const twentyFourHoursAgo = new Date(now.getTime() - (24 * 60 * 60 * 1000));
 
-  // Simplified GraphQL query - REMOVING firewallSummary
   const query = `
     query GetZoneAnalyticsSimplified($zoneTag: String!, $since: Time!, $until: Time!) {
       viewer {
@@ -190,7 +183,7 @@ async function getZoneAnalytics(zoneId, env) {
             }
           }
           cachedRequestsAndBytes: httpRequestsAdaptiveGroups(
-            filter: { datetime_geq: $since, datetime_lt: $until, cacheStatus: "hit" }, # Using cacheStatus
+            filter: { datetime_geq: $since, datetime_lt: $until, cacheStatus: "hit" },
             limit: 1
           ) {
             count 
@@ -198,7 +191,6 @@ async function getZoneAnalytics(zoneId, env) {
               edgeResponseBytes 
             }
           }
-          # firewallSummary section entirely removed
         }
       }
     }`;
@@ -245,7 +237,7 @@ async function getZoneAnalytics(zoneId, env) {
       cachedRequests: cachedSummary?.count || 0, 
       totalBytes: totalSummary?.sum?.edgeResponseBytes || 0, 
       cachedBytes: cachedSummary?.sum?.edgeResponseBytes || 0, 
-      threatsBlocked: 0, // Explicitly set to 0 as we are not fetching firewall data
+      threatsBlocked: 0, 
     };
 
   } catch (error) {
@@ -254,7 +246,16 @@ async function getZoneAnalytics(zoneId, env) {
   }
 }
 
-
+/**
+ * Adds a new DNS record (A or AAAA).
+ * @param {string} zoneId Cloudflare Zone ID.
+ * @param {string} type 'A' or 'AAAA'.
+ * @param {string} name Record name (e.g., www, @ for root).
+ * @param {string} content IP address.
+ * @param {boolean} proxied Proxy status.
+ * @param {Environment} env Environment variables.
+ * @returns {Promise<object|null>} The created record object on success, or null on failure.
+ */
 async function addDnsRecord(zoneId, type, name, content, proxied, env) {
   const url = `https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records`;
   const body = {
@@ -275,8 +276,8 @@ async function addDnsRecord(zoneId, type, name, content, proxied, env) {
       body: JSON.stringify(body),
     });
     const data = await response.json();
-    if (response.ok && data.success) {
-      return true;
+    if (response.ok && data.success && data.result) {
+      return data.result; // Return the created record object
     } else {
       const errorMessages = data.errors && data.errors.length > 0 ? data.errors.map(e => `(کد: ${e.code}) ${e.message}`).join(', ') : `خطای ${response.status}`;
       console.error('Cloudflare API error (addDnsRecord):', JSON.stringify(data.errors || data));
@@ -343,15 +344,15 @@ export default {
         if (callbackData) {
           const parts = callbackData.split('_');
           const action = parts[0];
-          const param1 = parts[1] || null;
-          const param2 = parts[2] || null;
-          const param3 = parts[3] || null;
+          const param1 = parts[1] || null; // zoneId or page number
+          const param2 = parts[2] || null; // pageNumber or recordType or pageOfRecord
+          const param3 = parts[3] || null; // indexOfRecordOnPage
 
           if (action === 'listzones') {
             const page = parseInt(param1 || '0', 10);
             await handleListZonesWithButtons(chatId, page, env, messageId);
           }
-          else if (action === 'domain' && param1) {
+          else if (action === 'domain' && param1) { // param1 is zoneId
             const zoneName = await getZoneNameById(param1, env);
             const messageText = `دامنه: ${zoneName}\nچه عملیاتی مد نظر شماست؟`;
             const keyboard = {
@@ -366,7 +367,7 @@ export default {
           else if (action === 'analytics' && param1) { // param1 is zoneId
             const zoneName = await getZoneNameById(param1, env);
             await editTelegramMessage(chatId, messageId, `⏳ در حال دریافت گزارش‌های آماری برای دامنه ${zoneName}...`, null, env);
-            const analytics = await getZoneAnalytics(param1, env); // Uses a query without firewall data
+            const analytics = await getZoneAnalytics(param1, env);
             let analyticsMessage = `📊 گزارش آماری دامنه ${zoneName} (۲۴ ساعت گذشته):\n\n`;
             if (analytics) {
               const cachePercentage = analytics.totalRequests > 0 ? ((analytics.cachedRequests / analytics.totalRequests) * 100).toFixed(1) : "N/A";
@@ -374,7 +375,6 @@ export default {
               analyticsMessage += `درخواست‌های کش شده: ${analytics.cachedRequests.toLocaleString()} (${cachePercentage}%)\n`;
               analyticsMessage += `کل داده منتقل شده: ${formatBytes(analytics.totalBytes)}\n`;
               analyticsMessage += `داده از کش: ${formatBytes(analytics.cachedBytes)}\n`;
-              // Since firewall data is removed from query, threatsBlocked will be 0
               analyticsMessage += `تهدیدهای متوقف شده: ${analytics.threatsBlocked.toLocaleString()} (داده‌های فایروال در این نسخه نمایش داده نمی‌شود)\n`;
             } else {
               analyticsMessage += "❌ اطلاعات آماری در دسترس نیست یا در دریافت آن‌ها خطایی رخ داده است.\n(توجه: دسترسی `Analytics:Read` برای توکن API کلودفلر شما لازم است. ممکن است برای دامنه‌های جدید اطلاعاتی موجود نباشد یا پلن حساب شما اجازه دسترسی به داده‌های خاص را ندهد. لطفاً لاگ‌های ورکر را برای جزئیات بیشتر بررسی کنید.)";
@@ -386,7 +386,7 @@ export default {
             };
             await editTelegramMessage(chatId, messageId, analyticsMessage, keyboard, env);
           }
-          else if (action === 'dnsmenu' && param1) {
+          else if (action === 'dnsmenu' && param1) { // param1 is zoneId
             const zoneName = await getZoneNameById(param1, env);
             const messageText = `مدیریت DNS برای دامنه: ${zoneName}\nلطفاً انتخاب کنید:`;
             const keyboard = {
@@ -398,16 +398,16 @@ export default {
             };
             await editTelegramMessage(chatId, messageId, messageText, keyboard, env);
           }
-          else if (action === 'dnsrecords' && param1) {
+          else if (action === 'dnsrecords' && param1) { // param1 is zoneId
             const page = parseInt(param2 || '0', 10);
             await handleListDnsRecordsWithButtons(chatId, param1, page, env, messageId);
           }
-          else if (action === 'dnsdetail' && param1) {
+          else if (action === 'dnsdetail' && param1) { // param1 is zoneId
             const pageOfRecord = parseInt(param2, 10);
             const indexOfRecordOnPage = parseInt(param3, 10);
             await handleViewDnsRecordDetail(chatId, param1, pageOfRecord, indexOfRecordOnPage, env, messageId);
           }
-          else if (action === 'dnsaddtype' && param1) {
+          else if (action === 'dnsaddtype' && param1) { // param1 is zoneId
             const zoneName = await getZoneNameById(param1, env);
             const messageText = `افزودن رکورد جدید برای دامنه: ${zoneName}\nلطفاً نوع رکورد را انتخاب کنید:`;
             const keyboard = {
@@ -419,11 +419,11 @@ export default {
             };
             await editTelegramMessage(chatId, messageId, messageText, keyboard, env);
           }
-          else if (action === 'dnsaddparams' && param1) {
-            const recordType = param2;
+          else if (action === 'dnsaddparams' && param1) { // param1 is zoneId
+            const recordType = param2; // 'A' or 'AAAA'
             const zoneName = await getZoneNameById(param1, env);
             let instructionMessage = `برای افزودن رکورد ${recordType} به دامنه ${zoneName}:\n\n`;
-            instructionMessage += `یک پیام با فرمت زیر ارسال کنید (دامنه را در دستور وارد کنید):\n`;
+            instructionMessage += `یک پیام با فرمت زیر ارسال کنید (نام دامنه را هم در دستور وارد کنید):\n`;
             if (recordType === 'A') {
               instructionMessage += "`/set_a_record ${zoneName} <نام ساب‌دامین> <آدرس IPv4> <on|off>`\n\n";
               instructionMessage += `مثال: \`/set_a_record ${zoneName} www 1.2.3.4 on\`\n`;
@@ -456,7 +456,7 @@ export default {
           }
           else if (text.startsWith('/set_a_record')) {
             const parts = text.split(' ');
-            if (parts.length === 5) {
+            if (parts.length === 5) { // /set_a_record <domain_name> <record_name> <ipv4_address> <on|off>
                 const domainName = parts[1];
                 const recordName = parts[2];
                 const ipAddress = parts[3];
@@ -481,8 +481,24 @@ export default {
 
                 await sendTelegramMessage(chatId, `⏳ در حال افزودن رکورد A برای ${recordName === '@' ? domainName : recordName + '.' + domainName}...`, null, env);
                 try {
-                    await addDnsRecord(targetZone.id, 'A', recordName, ipAddress, proxyState === 'on', env);
-                    await sendTelegramMessage(chatId, `✅ رکورد A برای ${recordName === '@' ? domainName : recordName + '.' + domainName} با موفقیت افزوده شد.`, null, env);
+                    const newRecord = await addDnsRecord(targetZone.id, 'A', recordName, ipAddress, proxyState === 'on', env);
+                    let successMessage = `✅ رکورد A برای ${newRecord.name} با موفقیت افزوده شد.\n\n`;
+                    successMessage += `جزئیات رکورد جدید:\n`;
+                    successMessage += `🔸 نام: ${newRecord.name}\n`;
+                    successMessage += `🔹 نوع: ${newRecord.type}\n`;
+                    successMessage += `🎯 محتوا: ${newRecord.content}\n`;
+                    successMessage += `☁️ پروکسی: ${newRecord.proxied ? 'روشن ✅' : 'خاموش ❌'}\n`;
+                    successMessage += `⏱️ TTL: ${newRecord.ttl === 1 ? 'Auto' : newRecord.ttl}\n\n`;
+                    successMessage += "لطفاً انتخاب کنید:";
+
+                    const keyboard = {
+                        inline_keyboard: [
+                            [{ text: '↩️ بازگشت به منوی DNS', callback_data: `dnsmenu_${targetZone.id}` }],
+                            [{ text: '🚪 خروج به لیست دامنه‌ها', callback_data: `listzones_0` }]
+                        ]
+                    };
+                    await sendTelegramMessage(chatId, successMessage, keyboard, env);
+
                 } catch (e) {
                      await sendTelegramMessage(chatId, `❌ ${e.message}`, null, env);
                 }
@@ -492,12 +508,13 @@ export default {
           }
           else if (text.startsWith('/set_aaaa_record')) {
             const parts = text.split(' ');
-            if (parts.length === 5) {
+            if (parts.length === 5) { // /set_aaaa_record <domain_name> <record_name> <ipv6_address> <on|off>
                 const domainName = parts[1];
                 const recordName = parts[2];
                 const ipv6Address = parts[3];
                 const proxyState = parts[4].toLowerCase();
                 
+                // Basic IPv6 validation - consider a robust library for production
                 if (ipv6Address.split(':').length < 2 || ipv6Address.length < 3) { 
                     await sendTelegramMessage(chatId, "⚠️ فرمت آدرس IPv6 نامعتبر به نظر می‌رسد.", null, env);
                     return new Response('OK');
@@ -516,8 +533,23 @@ export default {
                 
                 await sendTelegramMessage(chatId, `⏳ در حال افزودن رکورد AAAA برای ${recordName === '@' ? domainName : recordName + '.' + domainName}...`, null, env);
                 try {
-                    await addDnsRecord(targetZone.id, 'AAAA', recordName, ipv6Address, proxyState === 'on', env);
-                    await sendTelegramMessage(chatId, `✅ رکورد AAAA برای ${recordName === '@' ? domainName : recordName + '.' + domainName} با موفقیت افزوده شد.`, null, env);
+                    const newRecord = await addDnsRecord(targetZone.id, 'AAAA', recordName, ipv6Address, proxyState === 'on', env);
+                    let successMessage = `✅ رکورد AAAA برای ${newRecord.name} با موفقیت افزوده شد.\n\n`;
+                    successMessage += `جزئیات رکورد جدید:\n`;
+                    successMessage += `🔸 نام: ${newRecord.name}\n`;
+                    successMessage += `🔹 نوع: ${newRecord.type}\n`;
+                    successMessage += `🎯 محتوا: ${newRecord.content}\n`;
+                    successMessage += `☁️ پروکسی: ${newRecord.proxied ? 'روشن ✅' : 'خاموش ❌'}\n`;
+                    successMessage += `⏱️ TTL: ${newRecord.ttl === 1 ? 'Auto' : newRecord.ttl}\n\n`;
+                    successMessage += "لطفاً انتخاب کنید:";
+
+                    const keyboard = {
+                        inline_keyboard: [
+                            [{ text: '↩️ بازگشت به منوی DNS', callback_data: `dnsmenu_${targetZone.id}` }],
+                            [{ text: '🚪 خروج به لیست دامنه‌ها', callback_data: `listzones_0` }]
+                        ]
+                    };
+                    await sendTelegramMessage(chatId, successMessage, keyboard, env);
                 } catch (e) {
                     await sendTelegramMessage(chatId, `❌ ${e.message}`, null, env);
                 }
@@ -592,7 +624,11 @@ async function handleListZonesWithButtons(chatId, pageNumber, env, messageIdToEd
     const messageText = paginatedZones.length > 0 ? 'لطفاً دامنه مورد نظر را انتخاب کنید:' : 'دامنه‌ای برای نمایش در این صفحه وجود ندارد.';
     const keyboard = { inline_keyboard: inline_keyboard_rows };
     
-    await editTelegramMessage(chatId, currentMessageId, messageText, keyboard, env);
+    if (currentMessageId) { // Only edit if we have a message ID (either original or from loading message)
+        await editTelegramMessage(chatId, currentMessageId, messageText, keyboard, env);
+    } else { // Fallback if somehow currentMessageId is null (should not happen if loading message sent successfully)
+        await sendTelegramMessage(chatId, messageText, keyboard, env);
+    }
 }
 
 async function handleListDnsRecordsWithButtons(chatId, zoneId, pageNumber, env, messageIdToEdit) {
