@@ -697,3 +697,4 @@ async function handleViewDnsRecordDetail(chatId, zoneId, pageOfRecord, indexOfRe
     };
     await editTelegramMessage(chatId, messageIdToEdit, detailMessage, keyboard, env);
 }
+
