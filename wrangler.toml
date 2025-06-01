@@ -1,7 +1,5 @@
 name = "cloudflare-telegram-bot"
 main = "src/index.js"
 compatibility_date = "2025-06-02" 
-
-wrangler.toml (wrangler v4.18.0^)
 [observability.logs]
 enabled = true
